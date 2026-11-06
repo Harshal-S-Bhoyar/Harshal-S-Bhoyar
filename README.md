@@ -1,16 +1,14 @@
-## Hi there 👋
 
-<!--
-**Harshal-S-Bhoyar/Harshal-S-Bhoyar** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
+# Hi there! 👋
 
-Here are some ideas to get you started:
+Welcome to my GitHub profile!
 
-- 🔭 I’m currently working on ...
-- 🌱 I’m currently learning ...
-- 👯 I’m looking to collaborate on ...
-- 🤔 I’m looking for help with ...
-- 💬 Ask me about ...
-- 📫 How to reach me: ...
-- 😄 Pronouns: ...
-- ⚡ Fun fact: ...
--->
+## 🐟 My GitHub Koi
+
+<img src="koi/koi.gif" width="256" alt="My GitHub Koi" />
+
+## 🚀 About Me
+
+- 💻 I love programming and building projects.
+- 🌱 Always learning new technologies.
+- 📊 Interested in software development and data.
