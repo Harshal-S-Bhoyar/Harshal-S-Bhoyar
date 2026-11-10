@@ -1,54 +1,42 @@
-
-name: Exploring Koi
+name: Generate koi animation
 
 on:
-  schedule:
-    - cron: '20 0 * * *'
-
-  workflow_dispatch:
-
+  workflow_dispatch:            # lets you press "Run workflow" manually
   push:
     paths:
-      - '.github/workflows/koi.yml'
-      - 'scripts/koi_motion.py'
+      - "scripts/koi_motion.py"
+      - "assets/koi.png"
+      - ".github/workflows/koi.yml"
 
 permissions:
-  contents: write
-
-concurrency: koi
+  contents: write               # needed so the workflow can commit the GIF back
 
 jobs:
-  koi:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout profile repository
+      - name: Check out repo
         uses: actions/checkout@v4
 
-      - name: Generate original activity-based koi
-        uses: yalongwastaken/git-koi@v1
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          body: white
-          output-dir: koi
+          python-version: "3.12"
 
-      - name: Install Pillow
-        run: python -m pip install 'Pillow>=11,<13'
+      - name: Install dependencies
+        run: python -m pip install pillow numpy
 
-      - name: Generate natural swimming animation
+      - name: Generate koi GIF
         run: python scripts/koi_motion.py
 
-      - name: Commit updated GIFs
-        shell: bash
+      - name: Commit GIF if it changed
         run: |
-          git add koi/koi.gif koi/koi-explorer.gif
-
-          if git diff --cached --quiet; then
-            echo "No changes."
-            exit 0
-          fi
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git commit -m "Update naturally swimming koi"
-          git push
+          git add assets/koi.gif
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update koi animation"
+            git push
+          fi
