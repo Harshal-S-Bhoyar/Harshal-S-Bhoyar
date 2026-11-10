@@ -9,7 +9,7 @@ Welcome to my GitHub profile!
 <div align="center">
   <img
     src="koi/koi-explorer.gif"
-    width="320"
+    width="270"
     alt="My Exploring GitHub Koi"
   />
 </div>
