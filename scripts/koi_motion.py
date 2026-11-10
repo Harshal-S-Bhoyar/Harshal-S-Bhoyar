@@ -1,296 +1,168 @@
+#!/usr/bin/env python3
+"""
+koi_motion.py - make a koi fish swim along a wandering (non-circular) path.
 
-from bisect import bisect_left
-from pathlib import Path
+Fixes three common problems:
+  1. Size changing   -> the sprite is scaled ONCE, then only rotated. Every frame
+                        is pasted by its CENTER, so nothing is re-measured or resized.
+  2. Side-body swim  -> the fish is turned to face the direction it is moving
+                        (the heading comes from the path's velocity).
+  3. Circle motion   -> the path is a Lissajous-style curve (different x/y
+                        frequencies), which loops seamlessly but is not a circle.
+
+Edit the CONFIG block below. Only HEAD_DIRECTION and the paths usually need changing.
+"""
+
 import math
+import sys
+
+import numpy as np
 from PIL import Image
 
-SOURCE = Path("koi/koi.gif")
-OUTPUT = Path("koi/koi-explorer.gif")
+# ----------------------------- CONFIG ---------------------------------------
+INPUT_PATH = "assets/koi.png"      # source image (PNG with transparency is best; GIF's first frame is used)
+OUTPUT_PATH = "assets/koi.gif"     # GIF that the README will show
 
-# Swimming area and animation settings
-WIDTH, HEIGHT = 480, 320
-FRAMES = 180
-FRAME_MS = 80
-
-# Direction the fish's head faces in its original image.
-# Options: "up", "down", "left", "right"
+# Which way the fish's HEAD points in the ORIGINAL image: "up", "down", "left", "right"
 HEAD_DIRECTION = "up"
 
-# Natural tail movement
-TAIL_SWING_PIXELS = 4.0
-TAIL_CYCLES = 9
+CANVAS_W, CANVAS_H = 800, 300      # size of the final GIF
+BACKGROUND = (12, 36, 58)          # water color (RGB). A solid color avoids ugly GIF edge fringes.
 
-# Waypoints spread across the swimming area.
-# The fish follows smooth curves between these points.
-WAYPOINTS = [
-    (0.19, 0.24),
-    (0.39, 0.13),
-    (0.76, 0.23),
-    (0.86, 0.44),
-    (0.77, 0.73),
-    (0.52, 0.86),
-    (0.22, 0.74),
-    (0.13, 0.50),
-    (0.33, 0.36),
-    (0.65, 0.42),
-    (0.69, 0.60),
-    (0.43, 0.65),
-]
+FISH_LENGTH = 110                  # fish length in pixels. Fixed for the whole animation.
+FRAMES = 90                        # more frames = smoother
+FRAME_MS = 50                      # milliseconds per frame
+
+# Path shape: x moves 1 cycle, y moves 2 cycles over the loop -> a gentle figure-8 / S-curve
+PATH_MARGIN_X = 0.36               # fraction of canvas width used for horizontal swing
+PATH_MARGIN_Y = 0.30               # fraction of canvas height used for vertical swing
+PATH_WOBBLE = 0.12                 # extra small wiggle so it never looks mechanical
+
+# Tail wave
+TAIL_AMPLITUDE = 0.11              # side-to-side tail sway as a fraction of fish length
+TAIL_WAVES = 1.1                   # how many S-bends fit along the body
+TAIL_CYCLES_PER_LOOP = 6           # tail flaps per full loop (must be an integer for a seamless loop)
+# -----------------------------------------------------------------------------
 
 
-def catmull_rom(p0, p1, p2, p3, u):
-    """Generate a smooth swimming curve."""
-    u2 = u * u
-    u3 = u2 * u
+def load_sprite(path):
+    """Load the image, make the background transparent if it has none, crop tight."""
+    img = Image.open(path)
+    img.seek(0)                     # first frame only (for GIFs)
+    img = img.convert("RGBA")
+    arr = np.array(img)
 
-    return tuple(
-        0.5 * (
-            2 * b
-            + (-a + c) * u
-            + (2*a - 5*b + 4*c - d) * u2
-            + (-a + 3*b - 3*c + d) * u3
-        )
-        for a, b, c, d in zip(p0, p1, p2, p3)
-    )
+    # If the image has no transparency at all, treat the corner color as background.
+    if arr[..., 3].min() == 255:
+        corner = arr[0, 0, :3].astype(int)
+        diff = np.abs(arr[..., :3].astype(int) - corner).sum(axis=2)
+        arr[..., 3] = np.where(diff < 40, 0, 255)
 
-
-def course(s):
-    """Calculate a position along the closed route."""
-    n = len(WAYPOINTS)
-    s %= n
-
-    j = int(s)
-    u = s - j
-
-    return catmull_rom(
-        *[WAYPOINTS[(j+k) % n] for k in (-1, 0, 1, 2)],
-        u
-    )
+    img = Image.fromarray(arr)
+    bbox = img.getchannel("A").point(lambda a: 255 if a > 10 else 0).getbbox()
+    if bbox is None:
+        sys.exit("Source image looks empty (fully transparent).")
+    return img.crop(bbox)
 
 
-def constant_speed_positions(frame_count):
-    """Keep the fish moving smoothly at near-constant speed."""
-    samples = 3600
-
-    pts = [
-        course(len(WAYPOINTS) * i / samples)
-        for i in range(samples + 1)
-    ]
-
-    distances = [0.0]
-
-    for a, b in zip(pts, pts[1:]):
-        distance = math.hypot(
-            b[0] - a[0],
-            b[1] - a[1]
-        )
-        distances.append(distances[-1] + distance)
-
-    total = distances[-1]
-    positions = []
-
-    for i in range(frame_count):
-        target = total * i / frame_count
-        ix = max(1, bisect_left(distances, target))
-
-        fraction = (
-            (target - distances[ix - 1])
-            / max(1e-10, distances[ix] - distances[ix - 1])
-        )
-
-        a = pts[ix - 1]
-        b = pts[ix]
-
-        x = a[0] + fraction * (b[0] - a[0])
-        y = a[1] + fraction * (b[1] - a[1])
-
-        positions.append((x, y))
-
-    return positions
+def face_right(img, head):
+    """Rotate so the head points RIGHT (+x). Everything after this assumes that."""
+    # PIL rotates counter-clockwise by the given degrees.
+    angle = {"right": 0, "up": -90, "left": 180, "down": 90}[head.lower()]
+    return img.rotate(angle, expand=True, resample=Image.BICUBIC) if angle else img
 
 
-def bend_tail(sprite, phase):
-    """Wave the fish's tail while keeping its head steady."""
+def scale_once(img, length):
+    """Scale so the fish's length (now horizontal) equals `length`. Done ONCE."""
+    w, h = img.size
+    s = length / w
+    return img.resize((max(1, round(w * s)), max(1, round(h * s))), Image.LANCZOS)
 
-    if HEAD_DIRECTION in ("left", "right"):
-        transpose = (
-            Image.Transpose.ROTATE_270
-            if HEAD_DIRECTION == "left"
-            else Image.Transpose.ROTATE_90
-        )
 
-        inverse = (
-            Image.Transpose.ROTATE_90
-            if HEAD_DIRECTION == "left"
-            else Image.Transpose.ROTATE_270
-        )
+def wave_tail(sprite, t, amp_px, waves, phase_offset):
+    """
+    Bend the fish with a traveling wave. Head is on the RIGHT, tail on the LEFT.
+    Each pixel column is shifted up/down. The wave is ~0 at the head and grows
+    toward the tail, which is how real fish swim. Output size NEVER changes.
+    """
+    arr = np.array(sprite)
+    h, w = arr.shape[:2]
+    pad = int(math.ceil(amp_px)) + 2
+    out = np.zeros((h + 2 * pad, w, 4), dtype=np.uint8)
 
-        upright = sprite.transpose(transpose)
+    for x in range(w):
+        u = 1.0 - x / (w - 1)                    # 0 at head, 1 at tail
+        envelope = u ** 1.6                      # head stays calm, tail swings most
+        dy = amp_px * envelope * math.sin(2 * math.pi * (waves * u) - t + phase_offset)
+        dy = int(round(dy))
+        out[pad + dy: pad + dy + h, x] = arr[:, x]
 
-    elif HEAD_DIRECTION == "down":
-        upright = sprite.transpose(
-            Image.Transpose.ROTATE_180
-        )
-        inverse = Image.Transpose.ROTATE_180
+    return Image.fromarray(out)
 
-    else:
-        upright = sprite
-        inverse = None
 
-    w, h = upright.size
-    extra = math.ceil(TAIL_SWING_PIXELS) + 2
+def path_point(p):
+    """Position and velocity at loop progress p in [0, 1). Seamless when p wraps."""
+    w = 2 * math.pi * p
+    cx, cy = CANVAS_W / 2, CANVAS_H / 2
+    ax, ay = CANVAS_W * PATH_MARGIN_X, CANVAS_H * PATH_MARGIN_Y
+    wob = PATH_WOBBLE
 
-    result = Image.new(
-        "RGBA",
-        (w + 2 * extra, h),
-        (0, 0, 0, 0)
-    )
+    x = cx + ax * math.sin(w) + ax * wob * math.sin(3 * w + 1.3)
+    y = cy + ay * math.sin(2 * w + 0.6) + ay * wob * math.sin(5 * w)
 
-    for y in range(h):
-        fraction = y / max(1, h - 1)
-
-        # Head is steady; tail moves progressively more.
-        strength = max(
-            0.0,
-            (fraction - 0.32) / 0.68
-        ) ** 2
-
-        shift = round(
-            TAIL_SWING_PIXELS
-            * strength
-            * math.sin(phase - 1.8 * fraction)
-        )
-
-        strip = upright.crop((0, y, w, y + 1))
-        result.paste(strip, (extra + shift, y))
-
-    return (
-        result.transpose(inverse)
-        if inverse else result
-    )
+    dx = ax * math.cos(w) + ax * wob * 3 * math.cos(3 * w + 1.3)
+    dy = 2 * ay * math.cos(2 * w + 0.6) + ay * wob * 5 * math.cos(5 * w)
+    return x, y, dx, dy
 
 
 def main():
-    if HEAD_DIRECTION not in (
-        "up", "down", "left", "right"
-    ):
-        raise ValueError("Invalid HEAD_DIRECTION")
+    sprite = scale_once(face_right(load_sprite(INPUT_PATH), HEAD_DIRECTION), FISH_LENGTH)
+    amp_px = TAIL_AMPLITUDE * FISH_LENGTH
 
-    if not SOURCE.exists():
-        raise FileNotFoundError(
-            "Missing koi/koi.gif. Generate the original koi first."
-        )
-
-    source = Image.open(SOURCE)
-    source.seek(0)
-
-    # Preserve the koi appearance produced by Git Koi.
-    sprite = source.convert("RGBA")
-
-    bounds = sprite.getchannel("A").getbbox()
-
-    if not bounds:
-        raise ValueError("Source koi image is empty")
-
-    sprite = sprite.crop(bounds)
-
-    # Fit into the area while retaining original proportions.
-    scale = min(
-        1.0,
-        96 / sprite.width,
-        110 / sprite.height
-    )
-
-    if scale < 1.0:
-        sprite = sprite.resize(
-            (
-                max(1, round(sprite.width * scale)),
-                max(1, round(sprite.height * scale))
-            ),
-            Image.Resampling.NEAREST
-        )
-
-    positions = constant_speed_positions(FRAMES)
     frames = []
+    prev_heading = None
 
-    head_angles = {
-        "right": 0,
-        "up": 90,
-        "left": 180,
-        "down": 270
-    }
+    for i in range(FRAMES):
+        p = i / FRAMES
+        x, y, dx, dy = path_point(p)
 
-    diagonal = math.hypot(
-        sprite.width + 2 * TAIL_SWING_PIXELS + 6,
-        sprite.height
-    )
+        # Heading = direction of travel. Unwrap so it never spins the long way round.
+        heading = math.atan2(dy, dx)
+        if prev_heading is not None:
+            while heading - prev_heading > math.pi:
+                heading -= 2 * math.pi
+            while heading - prev_heading < -math.pi:
+                heading += 2 * math.pi
+        prev_heading = heading
 
-    margin = math.ceil(diagonal / 2) + 8
+        t = 2 * math.pi * TAIL_CYCLES_PER_LOOP * p
+        bent = wave_tail(sprite, t, amp_px, TAIL_WAVES, 0.0)
 
-    for i, (nx, ny) in enumerate(positions):
+        # Screen y points DOWN, so a positive atan2 angle is clockwise on screen.
+        # PIL rotates counter-clockwise, hence the minus sign.
+        rotated = bent.rotate(-math.degrees(heading), expand=True, resample=Image.BICUBIC)
 
-        previous = positions[(i - 1) % FRAMES]
-        following = positions[(i + 1) % FRAMES]
+        frame = Image.new("RGBA", (CANVAS_W, CANVAS_H), BACKGROUND + (255,))
+        # Paste by the CENTER of the rotated image, so the fish never jumps or shifts.
+        px = round(x - rotated.width / 2)
+        py = round(y - rotated.height / 2)
+        frame.paste(rotated, (px, py), rotated)
+        frames.append(frame.convert("RGB"))
 
-        dx = following[0] - previous[0]
-        dy = following[1] - previous[1]
+    # One shared palette for all frames -> no color flicker between frames.
+    palette_src = frames[len(frames) // 2].quantize(colors=128, method=Image.Quantize.MEDIANCUT)
+    gif_frames = [f.quantize(palette=palette_src, dither=Image.Dither.NONE) for f in frames]
 
-        # Head follows the movement direction.
-        heading = math.degrees(math.atan2(-dy, dx))
-
-        turn = heading - head_angles[HEAD_DIRECTION]
-
-        # Generate side-to-side tail movement.
-        phase = (
-            2 * math.pi * TAIL_CYCLES * i / FRAMES
-        )
-
-        fish = bend_tail(sprite, phase)
-
-        # Rotate the fish to swim head-first.
-        fish = fish.rotate(
-            turn,
-            resample=Image.Resampling.BICUBIC,
-            expand=True
-        )
-
-        cx = margin + nx * (WIDTH - 2 * margin)
-        cy = margin + ny * (HEIGHT - 2 * margin)
-
-        x = round(cx - fish.width / 2)
-        y = round(cy - fish.height / 2)
-
-        # Keep the fish within the swimming area.
-        x = max(0, min(WIDTH - fish.width, x))
-        y = max(0, min(HEIGHT - fish.height, y))
-
-        canvas = Image.new(
-            "RGBA",
-            (WIDTH, HEIGHT),
-            (0, 0, 0, 0)
-        )
-
-        canvas.alpha_composite(fish, (x, y))
-        frames.append(canvas)
-
-    OUTPUT.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    frames[0].save(
-        OUTPUT,
+    gif_frames[0].save(
+        OUTPUT_PATH,
         save_all=True,
-        append_images=frames[1:],
+        append_images=gif_frames[1:],
         duration=FRAME_MS,
         loop=0,
-        disposal=2,
-        optimize=False
+        optimize=False,
+        disposal=1,
     )
-
-    print(
-        f"Natural koi animation generated: {OUTPUT}"
-    )
+    print(f"Wrote {OUTPUT_PATH}: {len(gif_frames)} frames, {CANVAS_W}x{CANVAS_H}")
 
 
 if __name__ == "__main__":
