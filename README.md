@@ -6,7 +6,8 @@ Welcome to my GitHub profile!
 ## My GitHub Koi
 
 <div align="center">
-  <img src="koi/koi.gif" width="300" alt="My GitHub Koi" />
+ <img src="koi/koi-explorer.gif"
+    width="320" alt="My GitHub Koi" />
 </div>
 
 ## About Me
