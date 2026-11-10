@@ -5,10 +5,15 @@ Welcome to my GitHub profile!
 
 ## My GitHub Koi
 
+
 <div align="center">
- <img src="koi/koi-explorer.gif"
-    width="320" alt="My GitHub Koi" />
+  <img
+    src="koi/koi-explorer.gif"
+    width="320"
+    alt="My Exploring GitHub Koi"
+  />
 </div>
+
 
 ## About Me
 
