@@ -1,12 +1,13 @@
-
-name: Koi
+name: Exploring Koi
 
 on:
   schedule:
-    - cron: "20 0 * * *"
+    - cron: '20 0 * * *'
   workflow_dispatch:
   push:
-    paths: [.github/workflows/koi.yml]
+    paths:
+      - '.github/workflows/koi.yml'
+      - 'scripts/koi_motion.py'
 
 permissions:
   contents: write
@@ -17,22 +18,29 @@ jobs:
   koi:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - uses: yalongwastaken/git-koi@v1
+      - name: Generate original Git Koi
+        uses: yalongwastaken/git-koi@v1
         with:
           body: white
           output-dir: koi
 
-      - name: Commit the koi if it changed
+      - name: Install animation library
+        run: python -m pip install 'Pillow>=11,<13'
+
+      - name: Generate exploratory swimming animation
+        run: python scripts/koi_motion.py
+
+      - name: Commit updated animations
         shell: bash
         run: |
-          git add koi/koi.gif
+          git add koi/koi.gif koi/koi-explorer.gif
           if git diff --cached --quiet; then
-            echo "The koi is unchanged; nothing to commit."
+            echo 'No koi changes.'
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit --quiet --message "koi: draw the day's koi"
-          git push --quiet
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Update exploring koi animation'
+          git push
