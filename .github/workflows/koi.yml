@@ -21,7 +21,7 @@ jobs:
 
       - uses: yalongwastaken/git-koi@v1
         with:
-          body: asagi
+          body: black
           output-dir: koi
 
       - name: Commit the koi if it changed
