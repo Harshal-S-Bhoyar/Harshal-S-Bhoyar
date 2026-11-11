@@ -6,7 +6,8 @@ on:
     - cron: "20 0 * * *"
   workflow_dispatch:
   push:
-    paths: [.github/workflows/koi.yml]
+    paths:
+      - ".github/workflows/koi.yml"
 
 permissions:
   contents: write
@@ -16,23 +17,30 @@ concurrency: koi
 jobs:
   koi:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
 
-      - uses: yalongwastaken/git-koi@v1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate original Git Koi
+        uses: yalongwastaken/git-koi@v1.0.2
         with:
+          login: Harshal-S-Bhoyar
           body: black
           output-dir: koi
 
-      - name: Commit the koi if it changed
+      - name: Commit updated koi
         shell: bash
         run: |
           git add koi/koi.gif
+
           if git diff --cached --quiet; then
-            echo "The koi is unchanged; nothing to commit."
+            echo "No changes to koi."
             exit 0
           fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit --quiet --message "koi: draw the day's koi"
-          git push --quiet
+
+          git commit -m "Update Git Koi"
+          git push
