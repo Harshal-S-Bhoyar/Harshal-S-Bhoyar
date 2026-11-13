@@ -26,7 +26,7 @@ jobs:
         uses: yalongwastaken/git-koi@v1.0.2
         with:
           login: Harshal-S-Bhoyar
-          body: black
+          body: white
           output-dir: koi
 
       - name: Commit updated koi
